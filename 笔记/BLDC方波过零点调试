@@ -1,0 +1,129 @@
+# BLDC方波过零点调试
+
+## 过零点概念理解13168905441 ding
+
+在每个相序，都会纯在电压从0到高这个过程，刚好这个过零点就存在，通用的办法就是ADC采样，采集母线电压的一半，这样就可以看作过零信号，但是要把成本降低下去，可以使用比较器方法，利用比较器的输出信号，就能很好的获取过零信号。以下是两种采集办法图示
+
+![image-20250507143342865](F:\STMproject\笔记\BLDC方波过零点调试.assets\image-20250507143342865.png)
+
+![image-20250507143354370](F:\STMproject\笔记\BLDC方波过零点调试.assets\image-20250507143354370.png)
+
+其中，为什么过零点是母线电压的一半，有公式推导，电机电压平衡方程如图
+
+![image-20250507143556280](F:\STMproject\笔记\BLDC方波过零点调试.assets\image-20250507143556280.png)
+
+![image-20250507143707712](F:\STMproject\笔记\BLDC方波过零点调试.assets\image-20250507143707712.png)
+
+反电动势和驱动电压的图
+
+![image-20250507143758202](F:\STMproject\笔记\BLDC方波过零点调试.assets\image-20250507143758202.png)
+
+在任何过零点，可以得出，且与123式子联立化简
+
+![image-20250507143856537](F:\STMproject\笔记\BLDC方波过零点调试.assets\image-20250507143856537.png)
+
+那么Uu-Un就是从U到中性点的电压，再单独算Uw端 Iw为0
+
+最后可以得出结论当W相出现反电动势过零点的时候，Uw=vbus/2
+
+注意，此时是根据Uw的电压去推断过零点。
+
+![image-20250507144128522](F:\STMproject\笔记\BLDC方波过零点调试.assets\image-20250507144128522.png)
+
+![image-20250507144322553](F:\STMproject\笔记\BLDC方波过零点调试.assets\image-20250507144322553.png)
+
+## 如果采用比较器的方法，首先考虑原理
+
+磁感应强度是在AB之间为最大
+
+![image-20250507145800268](F:\STMproject\笔记\BLDC方波过零点调试.assets\image-20250507145800268.png)
+
+但是，如果是反电动势最大的点，其实是在磁感应强度变化最大的点，也就是斜率最大的点，用E=BLV这个公式可以得知
+
+AA BB CC都会产生反电动势，在AB通电的期间，C相是悬空，但是有反电动势磁产生
+
+**![image-20250507150043860](F:\STMproject\笔记\BLDC方波过零点调试.assets\image-20250507150043860.png)**
+
+也就是等效出来一个电源
+
+![image-20250507150229578](F:\STMproject\笔记\BLDC方波过零点调试.assets\image-20250507150229578.png)
+
+AB通电快结束的话，就是指t1时刻，感生电动势突然取反，因为他要维持这个方向电流
+
+![image-20250507150306099](F:\STMproject\笔记\BLDC方波过零点调试.assets\image-20250507150306099.png)
+
+![image-20250507150638468](F:\STMproject\笔记\BLDC方波过零点调试.assets\image-20250507150638468.png)
+
+在实际中，我们需要构造一个虚拟中性点，且这个中性点的点位不一定是1/2VDC，因为会采用分压电阻把这个电阻值采上，并且，这个虚拟中性点指的是反电动势的中性点，并不是实际电机的中性点，用比较器，就是比较这个反电动势是否大于或小于这个反电动势中点
+
+图中可以看到，这个反电动势采样点就是超出24V，并且当前中点为12V，但是经过分压电阻去采样，不是实际进入12v，在这个判断是否过零点
+
+![e14e00ba6ea69e54cf69aa3df2ddf90](F:\STMproject\笔记\BLDC方波过零点调试.assets\e14e00ba6ea69e54cf69aa3df2ddf90.jpg)
+
+在调试的过程中，发现降频率降低，降到合适的频率，虽然不会出现很完美对称的UVW相电压，但是发现之前的尖峰信号都消失，并且此时，每次进入中断去读取比较器的值，再经过简单的滤波，可以发现稳点的过零信号
+
+此时串口1ms发送一次数据
+
+根据我的理解，比较器不需要开启滤波，比较器全速跑，因为比较器本身不用到他的中断，在我每次进入中断的时候，读取比较器的状态，此时判断01 然后累加这个状态，根据这个状态来区别是否达到过零，假设累加16个1状态，那么就判断出来过零
+
+![76c2e4ab471bf5cb338bbe3839901ca](F:\STMproject\笔记\BLDC方波过零点调试.assets\76c2e4ab471bf5cb338bbe3839901ca.jpg)
+
+![image-20250507152133469](F:\STMproject\笔记\BLDC方波过零点调试.assets\image-20250507152133469.png)
+
+g_motor1_hallless.edge_queue[0] = g_motor1_hallless.edge_queue[0] <<1;
+		g_motor1_hallless.edge_queue[1] = g_motor1_hallless.edge_queue[1] <<1;
+		g_motor1_hallless.edge_queue[2] = g_motor1_hallless.edge_queue[2] <<1;
+		
+
+		g_motor1_hallless.edge_queue[0] |= COMP_GetOutStatus(COMP2);
+		g_motor1_hallless.edge_queue[1] |= COMP_GetOutStatus(COMP4);
+		g_motor1_hallless.edge_queue[2] |= COMP_GetOutStatus(COMP3);
+		
+		//U
+		g_motor1_hallless.edge_filter_result =g_motor1_hallless.edge_queue[0]&FILTER_LONG;
+		if(g_motor1_hallless.edge_filter_result == FILTER_LONG)
+		{
+			g_motor1_hallless.queue_filter[0]=1;
+		}
+		else if (g_motor1_hallless.edge_filter_result == 0x00)
+		{
+			g_motor1_hallless.queue_filter[0]=0;
+		}
+		else
+		{
+			g_motor1_hallless.edge_filter_count++;
+		}
+		
+		//V
+		g_motor1_hallless.edge_filter_result =g_motor1_hallless.edge_queue[1]&FILTER_LONG;
+		if(g_motor1_hallless.edge_filter_result == FILTER_LONG)
+		{
+			g_motor1_hallless.queue_filter[1]=1;
+		}
+		else if (g_motor1_hallless.edge_filter_result == 0x00)
+		{
+			g_motor1_hallless.queue_filter[1]=0;
+		}
+		else
+		{
+			g_motor1_hallless.edge_filter_count++;
+		}
+			
+		//W
+		g_motor1_hallless.edge_filter_result =g_motor1_hallless.edge_queue[2]&FILTER_LONG;
+		if(g_motor1_hallless.edge_filter_result == FILTER_LONG)
+		{
+			g_motor1_hallless.queue_filter[2]=1;
+		}
+		else if (g_motor1_hallless.edge_filter_result == 0x00)
+		{
+			g_motor1_hallless.queue_filter[2]=0;
+		}
+		else
+		{
+			g_motor1_hallless.edge_filter_count++;
+		}	
+			
+		g_motor1_hallless.bemf_current_state=(g_motor1_hallless.queue_filter[0])|(g_motor1_hallless.queue_filter[1]<<1)|(g_motor1_hallless.queue_filter[2]<<2);
+
+目前暂且调试到这个状态，并未完全正确，还需要判断
